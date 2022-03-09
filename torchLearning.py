@@ -4,6 +4,7 @@ import random
 # 绘图模块
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 # numpy
 import numpy as np
@@ -12,7 +13,7 @@ import numpy as np
 import torch
 from torch import nn,optim
 import torch.nn.functional as F
-from torch.utils.data import Dataset,TensorDataset,DataLoader
+from torch.utils.data import Dataset,TensorDataset,DataLoader,random_split
 
 def tensorGenReg(num_examples = 1000,w = [2,-1,1],bias = True,delta = 0.01,deg = 1):
     """回归类数据集创建函数
@@ -105,3 +106,228 @@ def data_iter(batch_size,features,labels):
         l.append([torch.index_select(features,0,j),torch.index_select(labels,0,j)])
         
     return l
+
+def linreg(X,w):
+    """线性模型
+    """
+    return torch.mm(X,w)
+
+def logistic(X,w):
+    """回归模型
+    """
+    return sigmoid(torch.mm(X,w))
+
+def softmax(X,w):
+    """softmax
+    对所有数据前向传播后的f*w,计算exp() 以第一个数据为例 exp_data1 = [exp(y1),exp(y2),exp(y3)]
+    对该条数据exp()计算后的结果求和 sum_data1 = exp(y1) + exp(y2) + exp(y3)
+    softmax_data1 = exp_data1 / sum_data1
+    对前向传播计算结果进行放缩 [y1,y2,y3] -> [new_y1,new_y2,new_y3]
+    """
+    m = torch.exp(torch.mm(X,w))
+    # torch.sum(m,1),参数1代表对行计算，0为对列计算
+    sp = torch.sum(m,1).reshape(-1,1)
+    
+    return m / sp
+
+def squared_loss(y_hat,y):
+    num_ = y.numel()
+    sse = torch.sum((y_hat.reshape(-1,1) - y.reshape(-1,1)) ** 2)
+    
+    return sse/num_
+
+def cross_entropy(sigma,y):
+    
+    return (-(1/y.numel()) * torch.sum((1-y)*torch.log(1-sigma) + y*torch.log(sigma)))
+
+def m_cross_entropy(soft_z,y):
+    y = y.long()
+    # 每个样本最大分类可能性 eg: soft_z = [[0.6,0.5,0.3],[0.3,0.4,0.2]]  pob_real=[[0.6],[0.4]]
+    prob_real = torch.gather(soft_z,1,y)
+    # torch.prod(prob_real) = 0.6 * 0.4
+    # torch.log(torch.prod(prob_real)) = log(0.6*0.4) = log(0.6) +log(0.4) 先相乘再log，内部取值可能过小可能会log0，因此先log再相加
+    return (-(1 / y.numel()) * torch.log(torch.prod(prob_real)))
+
+def sgd(params,lr):
+    params.data -= lr*params.grad
+    params.grad.zero_()
+
+class GenData(Dataset):
+    """针对手动创建数据的数据类
+    """
+    def __init__(self,features,labels): # 创建该类时需要输入的数据集
+        self.features = features
+        self.labels  = labels
+        self.lens = len(features)
+        
+    def __getitem__(self,index):
+        return self.features[index,:],self.labels[index]
+    
+    def __len__(self):
+        return self.lens
+    
+def split_loader(features,labels,batch_size=10,rate=0.7):
+    """数据封装、切分和加载数据
+    
+    param features: 输入的特征
+    param labele: 数据集标签张量
+    param batch_size: 数据加载时的每一个小批数据量
+    param rate: 训练集数据占比
+    return : 加载好的训练集和测试集
+    
+    """
+    data = GenData(features,labels)
+    num_train = int(data.lens * 0.7)
+    num_test = data.lens - num_train
+    
+    data_train,data_test = random_split(data,[num_train,num_test])
+    train_loader = DataLoader(data_train,batch_size=batch_size,shuffle=True)
+    test_loader = DataLoader(data_test,batch_size=batch_size,shuffle=False)
+    
+    return (train_loader,test_loader)
+    
+def fit(net,criterion,optimizer,batchData,epochs=3,cla=False):
+    """模型训练函数
+    param net: 待训练的模型
+    param citerion: 损失函数
+    param optimizer: 优化算法
+    param batchData: 训练数据集
+    param cla: 是否是分类问题
+    param epochs: 遍历数据次数
+    
+    """
+    
+    for epoch in range(epochs):
+        for X,y in batchData:
+            if cla == True:
+                y = y.flatten().long() # 如果是分类问题，要对y进行整数转化
+            yhat = net.forward(X)
+            loss = criterion(yhat,y)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+def mse_cal(data_loader,net):
+    """mse计算函数
+    
+    param data_Loader:加载好的数据
+    param net:模型
+    return :根据输入的数据，输出其MSE计算的结果
+    
+    """
+    data = data_loader.dataset # 还原 Dataset类
+    x = data[:][0] # 还原数据的特征
+    y = data[:][1] # 还原数据的标签
+    yhat = net(x)
+    
+    return F.mse_loss(yhat,y)
+
+
+def accuracy_cal(data_loader,net):
+    """准确率
+    param data_loader: 加载好的数据
+    param net: 数据
+    return : 根据输入的数据，输出其准确率计算结果
+    
+    """
+    data = data_loader.dataset # 还原 Dataset 类
+    X = data[:][0] # 还原数据的特征
+    y = data[:][1] # 还原数据的标签
+    zhat = net(X) # 默认是分类问题，并且输出结果是未经softmax转化的结果
+    soft_z = F.softmax(zhat,1) # 进行softmax转化
+    acc_bool = torch.argmax(soft_z,1).flatten() == y.flatten() # 每条数据最大值结果所属的类别与标签是否一致 1 列
+    acc = torch.mean(acc_bool.float())
+    
+    return acc
+
+def model_train_test(model,train_data,test_data,num_epochs=20,criterion=nn.MSELoss(),optimizer=optim.SGD,lr=0.03,cla=False,eva=mse_cal):
+    """模型误差测试函数
+    
+    param model: 模型
+    param train_data: 训练数据
+    param test_data: 测试数据
+    param num_epochs: 迭代次数
+    param criterion: 损失函数
+    param optimizer: 优化方法
+    param lr: 学习率
+    param cla: 是否是分类模型
+    return :MSE列表
+    
+    """
+    
+    # 模型评估指标列表
+    train_l = []
+    test_l = []
+    # 模型训练过程
+    for epochs in range(num_epochs):
+        fit(net = model,
+            criterion = criterion,
+            optimizer = optimizer(model.parameters(),lr=lr),
+            batchData = train_data,
+            epochs = epochs,
+            cla = cla
+        )
+        train_l.append(eva(train_data, model).detach())
+        test_l.append(eva(test_data, model).detach())
+        
+    return train_l, test_l
+
+def model_comparison(model_l,name_l,train_data,test_data,num_epochs=20,criterion=nn.MSELoss(),optimizer=optim.SGD,lr=0.03,cla=False,eva=mse_cal):
+    """模型对比函数
+    
+    param model_l: 模型序列
+    param name_l: 模型名称序列
+    param train_data: 训练数据
+    param test_data: 测试数据
+    param num_epochs: 迭代次数
+    param criterion: 损失函数
+    param lr: 学习率
+    param cla: 是否是分类模型
+    return :MSE张量矩阵
+    
+    """
+    
+    # 模型评估指标矩阵
+    train_l = torch.zeros(len(model_l),num_epochs)
+    test_l = torch.zeros(len(model_l),num_epochs)
+    
+    # 模型训练过程
+    for epochs in range(num_epochs):
+        for i,model in enumerate(model_l):
+            fit(net=model,
+               criterion=criterion,
+               optimizer=optimizer(model.parameters(),lr=lr),
+               batchData = train_data,
+               epochs = epochs,
+               cla=cla)
+            train_l[i][epochs] = eva(train_data, model).detach()
+            test_l[i][epochs] = eva(test_data, model).detach()
+            
+    return train_l,test_l
+
+def weights_vp(model, att="grad"):
+    """观察各层参数取值和梯度的小提琴图绘图函数
+    
+    param model: 观察对象（模型）
+    param att: 选择参数梯度（grad）还是参数取值（weights）进行观察
+    return : 对应att的小提琴图
+    
+    """
+    
+    vp =[] # 创建空列表用于存储每一层参数的难度
+
+    for i,m in enumerate(model.modules()):
+        if isinstance(m, nn.Linear):
+            if att == "grad":
+                vp_x = m.weight.grad.detach().reshape(-1,1).numpy() # 每一层参数梯度
+            else:
+                vp_x = m.weight.detach().reshape(-1,1).numpy() # 每一层参数权重
+            
+            vp_y = np.full_like(vp_x, i) # 对层进行标记
+            vp_a = np.concatenate((vp_x, vp_y), 1)
+            vp.append(vp_a)
+
+    vp_r = np.concatenate((vp), 0) # 拼接行
+
+    ax = sns.violinplot(y = vp_r[:,0],x = vp_r[:,1])
+    ax.set(xlabel='num_hidden',title=att)
