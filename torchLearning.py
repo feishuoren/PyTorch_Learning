@@ -260,6 +260,7 @@ def model_train_test(model,train_data,test_data,num_epochs=20,criterion=nn.MSELo
     test_l = []
     # 模型训练过程
     for epochs in range(num_epochs):
+        model.train()
         fit(net = model,
             criterion = criterion,
             optimizer = optimizer(model.parameters(),lr=lr),
@@ -267,6 +268,7 @@ def model_train_test(model,train_data,test_data,num_epochs=20,criterion=nn.MSELo
             epochs = epochs,
             cla = cla
         )
+        model.eval()
         train_l.append(eva(train_data, model).detach())
         test_l.append(eva(test_data, model).detach())
         
@@ -294,12 +296,14 @@ def model_comparison(model_l,name_l,train_data,test_data,num_epochs=20,criterion
     # 模型训练过程
     for epochs in range(num_epochs):
         for i,model in enumerate(model_l):
+            model.train()
             fit(net=model,
                criterion=criterion,
                optimizer=optimizer(model.parameters(),lr=lr),
                batchData = train_data,
                epochs = epochs,
                cla=cla)
+            model.eval()
             train_l[i][epochs] = eva(train_data, model).detach()
             test_l[i][epochs] = eva(test_data, model).detach()
             
@@ -331,3 +335,203 @@ def weights_vp(model, att="grad"):
 
     ax = sns.violinplot(y = vp_r[:,0],x = vp_r[:,1])
     ax.set(xlabel='num_hidden',title=att)
+    
+def Z_ScoreNormalization(data):
+    stdDf = data.std(0)
+    meanDf = data.mean(0)
+    normSet = (data - meanDf) / stdDf
+    
+    return normSet
+
+class net_class1(nn.Module):
+    def __init__(self,act_fun=torch.relu,in_features=2,n_hidden=4,out_features=1,bias=True,BN_model=None,momentum=0.1):
+        super(net_class1,self).__init__()
+        self.linear1 = nn.Linear(in_features,n_hidden,bias=bias)
+        self.normalize1 = nn.BatchNorm1d(n_hidden,momentum=momentum)
+        self.linear2 = nn.Linear(n_hidden,out_features,bias=bias)
+        self.BN_model = BN_model
+        self.act_fun = act_fun # 激活函数
+    
+    def forward(self,x):
+        if self.BN_model == None: # 没有BN层
+            z1 = self.linear1(x)
+            p1 = self.act_fun(z1)
+            out = self.linear2(p1)
+        elif self.BN_model == 'pre': # BN层前置
+            z1 = self.normalize1(self.linear1(x))
+            p1 = self.act_fun(z1)
+            out = self.linear2(p1)
+        elif self.BN_model == 'post': # BN层后置
+            z1 = self.linear1(x)
+            p1 = self.act_fun(z1)
+            out = self.linear2(self.normalize1(p1))
+            
+        return out  
+    
+class net_class2(nn.Module):
+    def __init__(self,act_fun=torch.relu,in_features=2,n_hidden1=4,n_hidden2=4,out_features=1,bias=True,BN_model=None,momentum=0.1):
+        super(net_class2,self).__init__()
+        self.linear1 = nn.Linear(in_features,n_hidden1,bias=bias)
+        self.normalize1 = nn.BatchNorm1d(n_hidden1,momentum=momentum)
+        self.linear2 = nn.Linear(n_hidden1,n_hidden2,bias=bias)
+        self.normalize2 = nn.BatchNorm1d(n_hidden2,momentum=momentum)
+        self.linear3 = nn.Linear(n_hidden2,out_features,bias=bias)
+        self.BN_model = BN_model
+        self.act_fun = act_fun # 激活函数
+    
+    def forward(self,x):
+        if self.BN_model == None: # 没有BN层
+            sigma1 = self.act_fun(self.linear1(x))
+            sigma2 = self.act_fun(self.linear2(sigma1))
+            out = self.linear3(sigma2)
+        elif self.BN_model == 'pre': # BN层前置
+            sigma1 = self.act_fun(self.normalize1(self.linear1(x)))
+            sigma2 = self.act_fun(self.normalize2(self.linear2(sigma1)))
+            out = self.linear3(sigma2)
+        elif self.BN_model == 'post': # BN层后置
+            sigma1 = self.normalize1(self.act_fun(self.linear1(x)))
+            sigma2 = self.normalize2(self.act_fun(self.linear2(sigma1)))
+            out = self.linear3(sigma2)
+            
+        return out  
+
+class net_class3(nn.Module):
+    def __init__(self,act_fun=torch.relu,in_features=2,n_hidden1=4,n_hidden2=4,n_hidden3=4,out_features=1,bias=True,BN_model=None,momentum=0.1):
+        super(net_class3,self).__init__()
+        self.linear1 = nn.Linear(in_features,n_hidden1,bias=bias)
+        self.normalize1 = nn.BatchNorm1d(n_hidden1,momentum=momentum)
+        self.linear2 = nn.Linear(n_hidden1,n_hidden2,bias=bias)
+        self.normalize2 = nn.BatchNorm1d(n_hidden2,momentum=momentum)
+        self.linear3 = nn.Linear(n_hidden2,n_hidden3,bias=bias)
+        self.normalize3 = nn.BatchNorm1d(n_hidden3,momentum=momentum)
+        self.linear4 = nn.Linear(n_hidden3,out_features,bias=bias)
+        self.BN_model = BN_model
+        self.act_fun = act_fun # 激活函数
+    
+    def forward(self,x):
+        if self.BN_model == None: # 没有BN层
+            sigma1 = self.act_fun(self.linear1(x))
+            sigma2 = self.act_fun(self.linear2(sigma1))
+            sigma3 = self.act_fun(self.linear3(sigma2))
+            out = self.linear4(sigma3)
+        elif self.BN_model == 'pre': # BN层前置
+            sigma1 = self.act_fun(self.normalize1(self.linear1(x)))
+            sigma2 = self.act_fun(self.normalize2(self.linear2(sigma1)))
+            sigma3 = self.act_fun(self.normalize3(self.linear3(sigma2)))
+            out = self.linear4(sigma3)
+        elif self.BN_model == 'post': # BN层后置
+            sigma1 = self.normalize1(self.act_fun(self.linear1(x)))
+            sigma2 = self.normalize2(self.act_fun(self.linear2(sigma1)))
+            sigma3 = self.normalize3(self.act_fun(self.linear3(sigma2)))
+            out = self.linear4(sigma3)
+            
+        return out  
+
+class net_class4(nn.Module):
+    def __init__(self,act_fun=torch.relu,in_features=2,n_hidden1=4,n_hidden2=4,n_hidden3=4,n_hidden4=4,out_features=1,bias=True,BN_model=None,momentum=0.1):
+        super(net_class4,self).__init__()
+        self.linear1 = nn.Linear(in_features,n_hidden1,bias=bias)
+        self.normalize1 = nn.BatchNorm1d(n_hidden1,momentum=momentum)
+        self.linear2 = nn.Linear(n_hidden1,n_hidden2,bias=bias)
+        self.normalize2 = nn.BatchNorm1d(n_hidden2,momentum=momentum)
+        self.linear3 = nn.Linear(n_hidden2,n_hidden3,bias=bias)
+        self.normalize3 = nn.BatchNorm1d(n_hidden3,momentum=momentum)
+        self.linear4 = nn.Linear(n_hidden3,n_hidden4,bias=bias)
+        self.normalize4 = nn.BatchNorm1d(n_hidden4,momentum=momentum)
+        self.linear5 = nn.Linear(n_hidden4,out_features,bias=bias)
+        self.BN_model = BN_model
+        self.act_fun = act_fun # 激活函数
+    
+    def forward(self,x):
+        if self.BN_model == None: # 没有BN层
+            sigma1 = self.act_fun(self.linear1(x))
+            sigma2 = self.act_fun(self.linear2(sigma1))
+            sigma3 = self.act_fun(self.linear3(sigma2))
+            sigma4 = self.act_fun(self.linear4(sigma3))
+            out = self.linear5(sigma4)
+        elif self.BN_model == 'pre': # BN层前置
+            sigma1 = self.act_fun(self.normalize1(self.linear1(x)))
+            sigma2 = self.act_fun(self.normalize2(self.linear2(sigma1)))
+            sigma3 = self.act_fun(self.normalize3(self.linear3(sigma2)))
+            sigma4 = self.act_fun(self.normalize4(self.linear4(sigma3)))
+            out = self.linear5(sigma4)
+        elif self.BN_model == 'post': # BN层后置
+            sigma1 = self.normalize1(self.act_fun(self.linear1(x)))
+            sigma2 = self.normalize2(self.act_fun(self.linear2(sigma1)))
+            sigma3 = self.normalize3(self.act_fun(self.linear3(sigma2)))
+            sigma4 = self.normalize4(self.act_fun(self.linear4(sigma3)))
+            out = self.linear5(sigma4)
+            
+        return out
+
+def fit_rec(net,criterion,optimizer,train_data,test_data,epochs=3,cla=False,eva=mse_cal):
+    """模型训练函数(记录每一次遍历后模型评估指标)
+    
+    param net: 待训练的模型
+    param citerion: 损失函数
+    param optimizer: 优化算法
+    param train_data: 训练数据
+    param test_data: 测试数据
+    param cla: 是否是分类问题
+    param epochs: 遍历数据次数
+    param eva: 模型评估结果
+    
+    return : 模型评估结果
+    
+    """
+    
+    train_l = []
+    test_l = []
+    
+    for epoch in range(epochs):
+        net.train()
+        for X,y in train_data:
+            if cla == True:
+                y = y.flatten().long() # 如果是分类问题，要对y进行整数转化
+            yhat = net.forward(X)
+            loss = criterion(yhat,y)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        net.eval()
+        train_l.append(eva(train_data, net).detach())
+        test_l.append(eva(test_data, net).detach())
+        
+    return train_l, test_l
+
+def fit_rec_sc(net,criterion,optimizer,train_data,test_data,scheduler,epochs = 3,cla = False,eva = mse_cal):
+    """加入学习率调度后的模型训练函数(记录每一次遍历后模型评估指标)
+    
+    param net: 待训练的模型
+    param citerion: 损失函数
+    param optimizer: 优化算法
+    param train_data: 训练数据
+    param test_data: 测试数据
+    param scheduler: 学习率调度器
+    param cla: 是否是分类问题
+    param epochs: 遍历数据次数
+    param eva: 模型评估结果
+    
+    return : 模型评估结果
+    
+    """
+    
+    train_l = []
+    test_l = []
+    
+    for epoch in range(epochs):
+        net.train()
+        for X,y in train_data:
+            if cla == True:
+                y = y.flatten().long() # 如果是分类问题，要对y进行整数转化
+            yhat = net.forward(X)
+            loss = criterion(yhat,y)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+        scheduler.step()
+        net.eval()
+        train_l.append(eva(train_data, net).detach())
+        test_l.append(eva(test_data, net).detach())
+        
+    return train_l, test_l
